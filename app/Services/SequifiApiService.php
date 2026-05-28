@@ -333,18 +333,32 @@ class SequifiApiService
             $lastName  = (string) ($user['last_name']  ?? '');
             $fullName  = trim($firstName . ' ' . $lastName) ?: null;
 
+            // Email: try every field name the API might use
+            $email = $user['email']
+                  ?? $user['email_address']
+                  ?? $user['work_email']
+                  ?? $user['personal_email']
+                  ?? null;
+
+            // Skip rows with no usable ID
+            $sequifiId = (string) ($user['id'] ?? '');
+            if ($sequifiId === '') {
+                Log::warning('SequifiApiService: skipping user row with no id', ['raw' => $user]);
+                continue;
+            }
+
             $rows[] = [
                 'tenant_id'   => $tenant->id,
-                'sequifi_id'  => (string) ($user['id'] ?? ''),
+                'sequifi_id'  => $sequifiId,
                 'first_name'  => $firstName ?: null,
                 'last_name'   => $lastName  ?: null,
                 'full_name'   => $fullName,
-                'email'       => ($user['email']   ?? null) ?: null,
-                'phone'       => ($user['phone']   ?? $user['phone_number'] ?? null) ?: null,
-                'worker_type' => ($user['worker_type'] ?? $user['workerType'] ?? null) ?: null,
-                'position'    => ($user['position'] ?? $user['job_title'] ?? null) ?: null,
-                'location'    => ($user['location'] ?? $user['office'] ?? $user['location_name'] ?? null) ?: null,
-                'status'      => ($user['status']   ?? null) ?: null,
+                'email'       => $email ?: null,
+                'phone'       => ($user['phone'] ?? $user['phone_number'] ?? $user['mobile'] ?? null) ?: null,
+                'worker_type' => ($user['worker_type'] ?? $user['workerType'] ?? $user['employment_type'] ?? null) ?: null,
+                'position'    => ($user['position'] ?? $user['job_title'] ?? $user['title'] ?? null) ?: null,
+                'location'    => ($user['location'] ?? $user['office'] ?? $user['location_name'] ?? $user['branch'] ?? null) ?: null,
+                'status'      => ($user['status'] ?? $user['employment_status'] ?? null) ?: null,
                 'raw_data'    => json_encode($user),
                 'synced_at'   => $now,
                 'created_at'  => $now,
