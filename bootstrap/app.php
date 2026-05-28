@@ -5,7 +5,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 
-return Application::configure(basePath: dirname(__DIR__))
+$app = Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
         commands: __DIR__.'/../routes/console.php',
@@ -19,3 +19,14 @@ return Application::configure(basePath: dirname(__DIR__))
             fn (Request $request) => $request->is('api/*'),
         );
     })->create();
+
+// Override storage and bootstrap paths on Vercel (read-only filesystem).
+// api/index.php creates the /tmp directories and sets these env vars before boot.
+if ($path = getenv('LARAVEL_STORAGE_PATH')) {
+    $app->useStoragePath($path);
+}
+if ($path = getenv('LARAVEL_BOOTSTRAP_PATH')) {
+    $app->useBootstrapPath($path);
+}
+
+return $app;
