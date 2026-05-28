@@ -30,13 +30,16 @@ class SnapshotSyncService
             ->pluck('change_mode', 'column_name')
             ->toArray();
 
-        $jobKeyColumn = $tenant->job_key_column;
-        $now          = now();
+        // The API uses its own field name for the unique record ID (default: 'pid').
+        // This is intentionally separate from job_key_column, which is the name
+        // that the *file* uses for the same value.
+        $apiKeyField = $tenant->api_job_key_field ?: 'pid';
+        $now         = now();
 
         // Deduplicate: last occurrence wins when the API returns the same key twice.
         $byKey = [];
         foreach ($jobs as $job) {
-            $jobKey = (string) ($job[$jobKeyColumn] ?? '');
+            $jobKey = (string) ($job[$apiKeyField] ?? '');
             if ($jobKey !== '') {
                 $byKey[$jobKey] = $job;
             }

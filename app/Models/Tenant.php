@@ -12,6 +12,7 @@ class Tenant extends Model
         'name',
         'slug',
         'job_key_column',
+        'api_job_key_field',
         'api_token',
         'sequifi_api_url',
         'sequifi_bearer_token',
