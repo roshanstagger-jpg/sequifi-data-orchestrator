@@ -42,9 +42,13 @@ class DiffEngineService
         }
 
         $counts = ['new' => 0, 'changed' => 0, 'unchanged' => 0];
+        // Keyed by job_key so that duplicate job_keys in the same import
+        // (e.g. paginated API returning the same record twice) are deduplicated.
+        // PostgreSQL's ON CONFLICT DO UPDATE rejects duplicate keys in a single
+        // INSERT batch with "command cannot affect row a second time".
         $snapshotUpserts = [];
         $runJobInserts   = [];
-        $incomingKeys    = [];
+        $seenKeys        = [];
         $now = now();
 
         foreach ($jobs as $job) {
@@ -53,18 +57,29 @@ class DiffEngineService
                 continue;
             }
 
-            $incomingKeys[] = $jobKey;
+            // Last occurrence wins for snapshot; skip duplicate run-job entries.
+            $alreadySeen = isset($seenKeys[$jobKey]);
+            $seenKeys[$jobKey] = true;
+
             $hash = $this->computeHash($job, $watchedFields);
 
-            if (!isset($existingSnapshot[$jobKey])) {
-                $changeType = 'new';
-                $counts['new']++;
-            } elseif ($existingSnapshot[$jobKey] !== $hash) {
-                $changeType = 'changed';
-                $counts['changed']++;
-            } else {
-                $changeType = 'unchanged';
-                $counts['unchanged']++;
+            if (!$alreadySeen) {
+                if (!isset($existingSnapshot[$jobKey])) {
+                    $changeType = 'new';
+                    $counts['new']++;
+                } elseif ($existingSnapshot[$jobKey] !== $hash) {
+                    $changeType = 'changed';
+                    $counts['changed']++;
+                } else {
+                    $changeType = 'unchanged';
+                    $counts['unchanged']++;
+                }
+
+                $runJobInserts[] = [
+                    'import_run_id' => $run->id,
+                    'job_key'       => $jobKey,
+                    'change_type'   => $changeType,
+                ];
             }
 
             // Build the data to persist in the snapshot.
@@ -76,34 +91,38 @@ class DiffEngineService
             $snapshotData = $job;
             if (!empty($fillOnlyFields) && isset($existingSnapshotData[$jobKey])) {
                 $oldData = $existingSnapshotData[$jobKey]; // already decoded (model casts to array)
-                foreach ($fillOnlyFields as $field) {
-                    $oldVal = (string) ($oldData[$field] ?? '');
-                    $newVal = (string) ($job[$field]  ?? '');
-                    if ($oldVal !== '' && $newVal !== '') {
-                        // Non-blank → non-blank: silently ignored change — freeze the old value.
-                        $snapshotData[$field] = $oldData[$field];
+                if (is_array($oldData)) {
+                    foreach ($fillOnlyFields as $field) {
+                        $oldVal = (string) ($oldData[$field] ?? '');
+                        $newVal = (string) ($job[$field]  ?? '');
+                        if ($oldVal !== '' && $newVal !== '') {
+                            // Non-blank → non-blank: silently ignored change — freeze the old value.
+                            $snapshotData[$field] = $oldData[$field];
+                        }
+                        // blank → non-blank: intentional fill — store the new value (default).
+                        // non-blank → blank:  allow the clear — store the new blank (default).
                     }
-                    // blank → non-blank: intentional fill — store the new value (default).
-                    // non-blank → blank:  allow the clear — store the new blank (default).
                 }
             }
 
-            $snapshotUpserts[] = [
+            // Pass $snapshotData as a PHP array — the model's 'array' cast will
+            // json_encode() it exactly once when building the INSERT statement.
+            // (Passing json_encode() here would cause the cast to double-encode it.)
+            $snapshotUpserts[$jobKey] = [
                 'tenant_id'       => $tenant->id,
                 'import_run_id'   => $run->id,
                 'job_key'         => $jobKey,
-                'data'            => json_encode($snapshotData),
+                'data'            => $snapshotData,
                 'snapshot_hash'   => $hash,
                 'created_at'      => $now,
                 'updated_at'      => $now,
             ];
-
-            $runJobInserts[] = [
-                'import_run_id' => $run->id,
-                'job_key'       => $jobKey,
-                'change_type'   => $changeType,
-            ];
         }
+
+        // Re-index to a plain array for chunking (keys were job_key strings).
+        $snapshotUpserts = array_values($snapshotUpserts);
+
+        $incomingKeys = array_keys($seenKeys);
 
         DB::transaction(function () use ($tenant, $run, $snapshotUpserts, $runJobInserts, $incomingKeys, $counts) {
             foreach (array_chunk($snapshotUpserts, 200) as $chunk) {

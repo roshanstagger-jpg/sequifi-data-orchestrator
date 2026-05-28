@@ -103,7 +103,11 @@ class ImportController extends Controller
                 'tenant_id' => $tenant->id,
                 'error'     => $e->getMessage(),
             ]);
-            return back()->withErrors(['pull' => 'API pull failed: ' . $e->getMessage()]);
+            // Truncate DB exceptions — they embed full SQL with row data.
+            $display = $e instanceof \Illuminate\Database\QueryException
+                ? 'Database error during pull. Check Vercel logs (run #' . $run->id . ').'
+                : 'API pull failed: ' . mb_substr($e->getMessage(), 0, 300);
+            return back()->withErrors(['pull' => $display]);
         }
 
         return redirect()
