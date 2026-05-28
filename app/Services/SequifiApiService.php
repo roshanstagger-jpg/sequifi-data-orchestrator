@@ -108,11 +108,22 @@ class SequifiApiService
         }
 
         $body = $response->json();
-        if (!isset($body['data'])) {
-            throw new \RuntimeException('Unexpected response format from Sequifi API (missing data key).');
+
+        // Standard Marketplace API shape: { status, message, data: { Sales, current_page, ... } }
+        if (isset($body['data']) && is_array($body['data'])) {
+            return $body['data'];
         }
 
-        return $body['data'];
+        // Some tenant endpoints return Sales/pagination at the root level
+        if (isset($body['Sales']) || isset($body['current_page'])) {
+            return $body;
+        }
+
+        // Neither shape matched — surface the raw response so the admin can diagnose
+        $preview = substr(json_encode($body) ?: $response->body(), 0, 400);
+        throw new \RuntimeException(
+            'Unexpected response format from Sequifi API. Raw response: ' . $preview
+        );
     }
 
     /**
