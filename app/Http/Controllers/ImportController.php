@@ -80,8 +80,8 @@ class ImportController extends Controller
 
     public function pull(Request $request, Tenant $tenant)
     {
-        if (!$tenant->isConfigured()) {
-            return back()->withErrors(['pull' => 'Tenant configuration is incomplete. Complete setup first.']);
+        if (!$tenant->isReadyForApiPull()) {
+            return back()->withErrors(['pull' => 'Complete setup first (job key + watched fields required).']);
         }
 
         if (!$tenant->hasApiConfig()) {

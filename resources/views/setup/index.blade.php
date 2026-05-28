@@ -199,11 +199,31 @@
 
         <div class="flex gap-3 mt-4">
             <button @click="step = 2" class="px-4 py-2 text-gray-600 text-sm hover:text-gray-900">← Back</button>
-            <button @click="step = 4" :disabled="watchedFields.length === 0"
-                    class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">
-                Continue →
-            </button>
+
+            {{-- API mode: offer to finish here (no output template needed for pulls) --}}
+            <template x-if="apiMode">
+                <div class="flex items-center gap-3">
+                    <button @click="saveFieldsAndDone()" :disabled="watchedFields.length === 0 || saving"
+                            class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-40"
+                            x-text="saving ? 'Saving…' : 'Done — start pulling'">
+                    </button>
+                    <button @click="step = 4" :disabled="watchedFields.length === 0"
+                            class="text-sm text-gray-500 hover:text-gray-700 underline">
+                        Also configure export template →
+                    </button>
+                </div>
+            </template>
+
+            {{-- File mode: must configure output template --}}
+            <template x-if="!apiMode">
+                <button @click="step = 4" :disabled="watchedFields.length === 0"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">
+                    Continue →
+                </button>
+            </template>
         </div>
+
+        <div x-show="saveError" class="mt-3 text-sm text-red-600" x-text="saveError"></div>
     </div>
 
     {{-- Step 4: Output template --}}
@@ -354,6 +374,37 @@ function setupWizard() {
                 this.apiTestError = 'Connection test failed. Please try again.';
             } finally {
                 this.testingApi = false;
+            }
+        },
+
+        // API-pull-only path: save job key + watched fields, then go straight to runs.
+        // No output template needed — API pulls just establish/refresh the baseline.
+        async saveFieldsAndDone() {
+            this.saving = true;
+            this.saveError = '';
+            try {
+                const res = await fetch('{{ route('tenants.setup.fields', $tenant) }}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-XSRF-TOKEN': this.xsrfToken(),
+                    },
+                    body: JSON.stringify({
+                        job_key_column: this.jobKeyColumn,
+                        watched_fields: this.watchedFields,
+                        field_modes: this.fieldModes,
+                    }),
+                });
+                if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    throw new Error(d.message ?? 'Failed to save configuration.');
+                }
+                window.location.href = '{{ route('tenants.runs.index', $tenant) }}';
+            } catch (e) {
+                this.saveError = e.message;
+            } finally {
+                this.saving = false;
             }
         },
 

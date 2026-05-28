@@ -44,11 +44,25 @@ class Tenant extends Model
         return $this->hasMany(SnapshotJob::class);
     }
 
+    /**
+     * Ready for file imports — requires job key, watched fields, AND output template
+     * (the template drives the delta export).
+     */
     public function isConfigured(): bool
     {
         return $this->job_key_column !== null
             && $this->watchedFields()->exists()
             && $this->exportTemplateColumns()->exists();
+    }
+
+    /**
+     * Ready for API pulls — only requires job key + watched fields.
+     * API pulls establish/refresh the baseline snapshot; no export template needed.
+     */
+    public function isReadyForApiPull(): bool
+    {
+        return $this->job_key_column !== null
+            && $this->watchedFields()->exists();
     }
 
     public function hasApiConfig(): bool
