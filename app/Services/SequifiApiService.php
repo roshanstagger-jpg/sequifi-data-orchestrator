@@ -107,7 +107,18 @@ class SequifiApiService
             throw new \RuntimeException($message);
         }
 
-        $body = $response->json();
+        $rawBody = $response->body();
+        $body    = $response->json();
+
+        // If body isn't JSON at all, surface it directly (HTML redirect, plain text, etc.)
+        if ($body === null) {
+            $preview = substr($rawBody, 0, 500);
+            throw new \RuntimeException(
+                'Sequifi API returned a non-JSON response (HTTP ' . $response->status() . '). '
+                . 'This usually means the base URL is wrong or the token is invalid for this domain. '
+                . 'Raw: ' . $preview
+            );
+        }
 
         // Standard Marketplace API shape: { status, message, data: { Sales, current_page, ... } }
         if (isset($body['data']) && is_array($body['data'])) {
@@ -120,7 +131,7 @@ class SequifiApiService
         }
 
         // Neither shape matched — surface the raw response so the admin can diagnose
-        $preview = substr(json_encode($body) ?: $response->body(), 0, 400);
+        $preview = substr(json_encode($body), 0, 400);
         throw new \RuntimeException(
             'Unexpected response format from Sequifi API. Raw response: ' . $preview
         );
