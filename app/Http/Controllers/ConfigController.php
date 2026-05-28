@@ -20,9 +20,26 @@ class ConfigController extends Controller
 
     public function uploadSample(Request $request, Tenant $tenant)
     {
-        $request->validate(['file' => 'required|file|mimes:xlsx,xls,csv|max:10240']);
+        // mimes:xlsx,xls,csv is intentionally omitted — PHP's fileinfo extension
+        // often misidentifies .xlsx files as application/zip (xlsx is ZIP-based),
+        // causing false validation failures. Extension is validated via the client-
+        // side accept attribute; the parser will throw on truly unreadable files.
+        $request->validate(['file' => 'required|file|max:10240']);
 
-        $columns = $this->parser->detectColumns($request->file('file'));
+        try {
+            $columns = $this->parser->detectColumns($request->file('file'));
+        } catch (\Throwable $e) {
+            return response()->json([
+                'message' => 'Could not read the file. Please upload a valid .xlsx, .xls, or .csv file.',
+            ], 422);
+        }
+
+        if (empty($columns)) {
+            return response()->json([
+                'message' => 'No column headers detected. Ensure the file has a header row.',
+            ], 422);
+        }
+
         session(['detected_columns_' . $tenant->id => $columns]);
 
         return response()->json(['columns' => $columns]);

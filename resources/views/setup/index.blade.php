@@ -157,6 +157,14 @@ function setupWizard() {
         error: '',
         saveError: '',
 
+        // Always read the XSRF-TOKEN cookie — it's updated on every response so it
+        // stays current even if the page has been open across cold-starts or navigation,
+        // preventing 419 errors caused by stale CSRF tokens in the meta tag.
+        xsrfToken() {
+            const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]+)/);
+            return match ? decodeURIComponent(match[1]) : '';
+        },
+
         async uploadSample(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -165,20 +173,23 @@ function setupWizard() {
 
             const form = new FormData();
             form.append('file', file);
-            form.append('_token', document.querySelector('meta[name="csrf-token"]').content);
 
             try {
                 const res = await fetch('{{ route('tenants.setup.sample', $tenant) }}', {
                     method: 'POST',
+                    headers: {
+                        'Accept': 'application/json',
+                        'X-XSRF-TOKEN': this.xsrfToken(),
+                    },
                     body: form,
                 });
+                const data = await res.json();
                 if (!res.ok) {
-                    this.error = res.status === 422 ? 'Invalid file type. Please upload .xlsx, .xls, or .csv.' : 'Upload failed. Try again.';
+                    this.error = data.message ?? (res.status === 422 ? 'Invalid file. Please upload .xlsx, .xls, or .csv.' : 'Upload failed. Try again.');
                     return;
                 }
-                const data = await res.json();
                 this.columns = data.columns ?? [];
-                if (!this.columns.length) this.error = 'No columns detected. Check the file format.';
+                if (!this.columns.length) this.error = 'No columns detected. Check the file has a header row.';
             } catch {
                 this.error = 'Upload failed. Try again.';
             } finally {
@@ -189,25 +200,36 @@ function setupWizard() {
         async saveConfig() {
             this.saving = true;
             this.saveError = '';
-            const token = document.querySelector('meta[name="csrf-token"]').content;
 
             try {
+                const headers = {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-XSRF-TOKEN': this.xsrfToken(),
+                };
+
                 const fieldsRes = await fetch('{{ route('tenants.setup.fields', $tenant) }}', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json', 'X-CSRF-TOKEN': token},
+                    headers,
                     body: JSON.stringify({
                         job_key_column: this.jobKeyColumn,
                         watched_fields: this.watchedFields,
                     }),
                 });
-                if (!fieldsRes.ok) throw new Error(fieldsRes.status === 422 ? 'Validation error saving fields. Check your selections.' : 'Failed to save configuration. Try again.');
+                if (!fieldsRes.ok) {
+                    const d = await fieldsRes.json().catch(() => ({}));
+                    throw new Error(d.message ?? (fieldsRes.status === 422 ? 'Validation error saving fields.' : 'Failed to save configuration.'));
+                }
 
                 const templateRes = await fetch('{{ route('tenants.setup.template', $tenant) }}', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json', 'X-CSRF-TOKEN': token},
+                    headers,
                     body: JSON.stringify({ columns: this.outputMappings }),
                 });
-                if (!templateRes.ok) throw new Error(templateRes.status === 422 ? 'Validation error saving template. Ensure all columns are mapped.' : 'Failed to save configuration. Try again.');
+                if (!templateRes.ok) {
+                    const d = await templateRes.json().catch(() => ({}));
+                    throw new Error(d.message ?? (templateRes.status === 422 ? 'Validation error saving template.' : 'Failed to save configuration.'));
+                }
 
                 window.location.href = '{{ route('tenants.runs.index', $tenant) }}';
             } catch (e) {
