@@ -154,72 +154,128 @@ class SequifiApiService
      * - custom_field_values object: custom_{key} = value
      * - 'id' is skipped (internal DB id)
      */
+    /**
+     * Normalize a single sale record into a flat string key→value map.
+     *
+     * Scalar fields are cast to string as-is.  Structured fields are flattened:
+     *
+     * closer1_detail / closer2_detail / setter1_detail / setter2_detail
+     *   → {prefix}_id, {prefix}_name (first+last), {prefix}_dismiss,
+     *     {prefix}_terminate, {prefix}_contract_ended, {prefix}_stop_payroll
+     *
+     * last_milestone  (object: name/trigger/value/date)
+     *   → last_milestone_name, last_milestone_trigger,
+     *     last_milestone_value, last_milestone_date
+     *
+     * all_milestone   (array of: name/trigger/value/date/is_projected)
+     *   → milestone_{snake_name}          (date string)
+     *   → milestone_{snake_name}_value    (commission amount)
+     *   → milestone_{snake_name}_trigger  (trigger label, e.g. "Final Payment")
+     *   → milestone_{snake_name}_projected (0 or 1)
+     *   e.g. "M1 Date" → milestone_m1_date, milestone_m1_date_value …
+     *
+     * milestone_dates (legacy swagger shape: [{trigger_name, date}])
+     *   → milestone_{snake_trigger_name}
+     *
+     * custom_field_values (object)
+     *   → custom_{key}
+     *
+     * Internal 'id' is skipped.
+     */
     private function normalizeSale(array $sale): array
     {
         $row = [];
 
-        $detailPrefixes = ['closer1_detail', 'closer2_detail', 'setter1_detail', 'setter2_detail'];
+        $detailKeys = ['closer1_detail', 'closer2_detail', 'setter1_detail', 'setter2_detail'];
 
         foreach ($sale as $key => $value) {
-            // Skip internal ID
+            // ── skip internal DB id ────────────────────────────────────────────
             if ($key === 'id') {
                 continue;
             }
 
-            // Handle known nested detail objects
-            if (in_array($key, $detailPrefixes, true)) {
-                if (is_array($value) && $value !== null) {
+            // ── person detail objects ──────────────────────────────────────────
+            if (in_array($key, $detailKeys, true)) {
+                if (is_array($value)) {
                     $prefix = str_replace('_detail', '', $key);
-                    $firstName = $value['first_name'] ?? '';
-                    $lastName  = $value['last_name'] ?? '';
-                    $row["{$prefix}_name"]  = trim("{$firstName} {$lastName}");
-                    $row["{$prefix}_email"] = (string) ($value['email'] ?? '');
+                    $row["{$prefix}_id"]              = (string) ($value['id'] ?? '');
+                    $row["{$prefix}_name"]             = trim(($value['first_name'] ?? '') . ' ' . ($value['last_name'] ?? ''));
+                    $row["{$prefix}_dismiss"]          = (string) ($value['dismiss'] ?? '');
+                    $row["{$prefix}_terminate"]        = (string) ($value['terminate'] ?? '');
+                    $row["{$prefix}_contract_ended"]   = (string) ($value['contract_ended'] ?? '');
+                    $row["{$prefix}_stop_payroll"]     = (string) ($value['stop_payroll'] ?? '');
                 }
                 continue;
             }
 
-            // Handle milestone_dates array
+            // ── last_milestone object ──────────────────────────────────────────
+            if ($key === 'last_milestone') {
+                if (is_array($value)) {
+                    $row['last_milestone_name']    = (string) ($value['name']    ?? '');
+                    $row['last_milestone_trigger'] = (string) ($value['trigger'] ?? '');
+                    $row['last_milestone_value']   = (string) ($value['value']   ?? '');
+                    $row['last_milestone_date']    = (string) ($value['date']    ?? '');
+                }
+                continue;
+            }
+
+            // ── all_milestone array ────────────────────────────────────────────
+            if ($key === 'all_milestone') {
+                if (is_array($value)) {
+                    foreach ($value as $ms) {
+                        if (!is_array($ms) || !isset($ms['name'])) {
+                            continue;
+                        }
+                        // "M1 Date" → "m1_date", "Final Payment" → "final_payment"
+                        $slug = strtolower(str_replace([' ', '-'], '_', (string) $ms['name']));
+                        $row["milestone_{$slug}"]           = (string) ($ms['date']         ?? '');
+                        $row["milestone_{$slug}_value"]     = (string) ($ms['value']        ?? '');
+                        $row["milestone_{$slug}_trigger"]   = (string) ($ms['trigger']      ?? '');
+                        $row["milestone_{$slug}_projected"] = (string) ($ms['is_projected'] ?? '0');
+                    }
+                }
+                continue;
+            }
+
+            // ── milestone_dates (legacy swagger shape) ─────────────────────────
             if ($key === 'milestone_dates') {
                 if (is_array($value)) {
-                    foreach ($value as $milestone) {
-                        if (!is_array($milestone)) {
+                    foreach ($value as $ms) {
+                        if (!is_array($ms)) {
                             continue;
                         }
-                        $triggerName = $milestone['trigger_name'] ?? null;
-                        $date        = $milestone['date'] ?? '';
-                        if ($triggerName === null) {
+                        $trigger   = $ms['trigger_name'] ?? ($ms['trigger'] ?? null);
+                        if ($trigger === null) {
                             continue;
                         }
-                        // spaces → underscores, lowercased
-                        $fieldName           = 'milestone_' . strtolower(str_replace(' ', '_', (string) $triggerName));
-                        $row[$fieldName]     = (string) $date;
+                        $slug              = strtolower(str_replace([' ', '-'], '_', (string) $trigger));
+                        $row["milestone_{$slug}"] = (string) ($ms['date'] ?? '');
                     }
                 }
                 continue;
             }
 
-            // Handle custom_field_values object
+            // ── custom_field_values object ─────────────────────────────────────
             if ($key === 'custom_field_values') {
                 if (is_array($value)) {
-                    foreach ($value as $fieldName => $fieldValue) {
-                        if (is_array($fieldValue)) {
-                            // skip nested arrays we don't know how to handle
-                            Log::debug('SequifiApiService: skipping nested array in custom_field_values', ['key' => $fieldName]);
+                    foreach ($value as $cfKey => $cfVal) {
+                        if (is_array($cfVal)) {
+                            Log::debug('SequifiApiService: skipping nested array in custom_field_values', ['key' => $cfKey]);
                             continue;
                         }
-                        $row['custom_' . $fieldName] = (string) ($fieldValue ?? '');
+                        $row['custom_' . $cfKey] = (string) ($cfVal ?? '');
                     }
                 }
                 continue;
             }
 
-            // Skip arrays we don't know how to handle
+            // ── skip any remaining unknown nested arrays ───────────────────────
             if (is_array($value)) {
                 Log::debug('SequifiApiService: skipping unknown array field', ['key' => $key]);
                 continue;
             }
 
-            // Flat scalar field
+            // ── flat scalar ────────────────────────────────────────────────────
             $row[$key] = (string) ($value ?? '');
         }
 
