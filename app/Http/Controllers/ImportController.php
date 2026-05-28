@@ -43,7 +43,12 @@ class ImportController extends Controller
             $this->diffEngine->diff($tenant, $run, $jobs);
         } catch (\Throwable $e) {
             $run->update(['status' => 'failed', 'error_message' => $e->getMessage()]);
-            return back()->withErrors(['file' => 'Import failed: ' . $e->getMessage()]);
+            \Illuminate\Support\Facades\Log::error('Import failed', [
+                'run_id' => $run->id,
+                'tenant_id' => $tenant->id,
+                'error' => $e->getMessage(),
+            ]);
+            return back()->withErrors(['file' => 'Import failed. Please check your file format and try again.']);
         }
 
         return redirect()

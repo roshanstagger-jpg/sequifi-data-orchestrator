@@ -172,6 +172,10 @@ function setupWizard() {
                     method: 'POST',
                     body: form,
                 });
+                if (!res.ok) {
+                    this.error = res.status === 422 ? 'Invalid file type. Please upload .xlsx, .xls, or .csv.' : 'Upload failed. Try again.';
+                    return;
+                }
                 const data = await res.json();
                 this.columns = data.columns ?? [];
                 if (!this.columns.length) this.error = 'No columns detected. Check the file format.';
@@ -196,14 +200,14 @@ function setupWizard() {
                         watched_fields: this.watchedFields,
                     }),
                 });
-                if (!fieldsRes.ok) throw new Error('Failed to save fields');
+                if (!fieldsRes.ok) throw new Error(fieldsRes.status === 422 ? 'Validation error saving fields. Check your selections.' : 'Failed to save configuration. Try again.');
 
                 const templateRes = await fetch('{{ route('tenants.setup.template', $tenant) }}', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json', 'X-CSRF-TOKEN': token},
                     body: JSON.stringify({ columns: this.outputMappings }),
                 });
-                if (!templateRes.ok) throw new Error('Failed to save template');
+                if (!templateRes.ok) throw new Error(templateRes.status === 422 ? 'Validation error saving template. Ensure all columns are mapped.' : 'Failed to save configuration. Try again.');
 
                 window.location.href = '{{ route('tenants.runs.index', $tenant) }}';
             } catch (e) {
