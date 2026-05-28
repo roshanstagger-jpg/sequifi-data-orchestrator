@@ -13,7 +13,13 @@ class DiffEngineService
 {
     public function diff(Tenant $tenant, ImportRun $run, array $jobs): array
     {
-        $watchedFields = $tenant->watchedFields()->pluck('column_name')->toArray();
+        // Load watched fields as [ column_name => change_mode ]
+        // change_mode: 'any_change' | 'fill_only'
+        $watchedFields = $tenant->watchedFields()
+            ->get(['column_name', 'change_mode'])
+            ->pluck('change_mode', 'column_name')
+            ->toArray();
+
         $jobKeyColumn = $tenant->job_key_column;
 
         $existingSnapshot = SnapshotJob::where('tenant_id', $tenant->id)
@@ -94,6 +100,12 @@ class DiffEngineService
         return $counts;
     }
 
+    /**
+     * Compute a deterministic hash over the watched fields of a job row.
+     *
+     * @param  array<string, mixed>   $job           Raw row from the import file
+     * @param  array<string, string>  $watchedFields Map of column_name => change_mode
+     */
     private function computeHash(array $job, array $watchedFields): string
     {
         if (empty($watchedFields)) {
@@ -101,8 +113,18 @@ class DiffEngineService
         }
 
         $values = [];
-        foreach ($watchedFields as $field) {
-            $values[$field] = (string) ($job[$field] ?? '');
+        foreach ($watchedFields as $field => $mode) {
+            $raw = (string) ($job[$field] ?? '');
+
+            if ($mode === 'fill_only') {
+                // Normalize to a binary sentinel so that a change between two
+                // non-blank values is invisible to the hash, but a blank→value
+                // transition (or value→blank) is detected.
+                $values[$field] = $raw === '' ? '' : '1';
+            } else {
+                // any_change: use the actual value
+                $values[$field] = $raw;
+            }
         }
         ksort($values);
 

@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class WatchedField extends Model
 {
-    protected $fillable = ['tenant_id', 'column_name'];
+    protected $fillable = ['tenant_id', 'column_name', 'change_mode'];
 
     public function tenant(): BelongsTo
     {

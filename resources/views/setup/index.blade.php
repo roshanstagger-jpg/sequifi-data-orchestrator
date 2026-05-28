@@ -86,11 +86,42 @@
 
         <div class="space-y-2 max-h-72 overflow-y-auto">
             <template x-for="col in columns" :key="col">
-                <label class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer"
-                       :class="watchedFields.includes(col) ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'">
-                    <input type="checkbox" :value="col" x-model="watchedFields" class="text-blue-600 rounded">
-                    <span class="text-sm" x-text="col"></span>
-                </label>
+                <div class="rounded-lg border"
+                     :class="watchedFields.includes(col) ? 'border-blue-500 bg-blue-50' : 'border-gray-200'">
+                    <label class="flex items-center gap-3 p-3 cursor-pointer">
+                        <input type="checkbox" :value="col" x-model="watchedFields" class="text-blue-600 rounded flex-shrink-0">
+                        <span class="text-sm flex-1" x-text="col"></span>
+                    </label>
+
+                    {{-- Change-mode toggle — only shown when the field is checked --}}
+                    <div x-show="watchedFields.includes(col)"
+                         x-transition:enter="transition ease-out duration-100"
+                         x-transition:enter-start="opacity-0 -translate-y-1"
+                         x-transition:enter-end="opacity-100 translate-y-0"
+                         class="px-3 pb-3 flex items-center gap-2">
+                        <span class="text-xs text-gray-400 mr-1">Trigger on:</span>
+                        <button type="button"
+                                @click.prevent="fieldModes[col] = 'any_change'"
+                                :class="(fieldModes[col] || 'any_change') === 'any_change'
+                                    ? 'bg-blue-600 text-white'
+                                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
+                                class="px-2.5 py-1 rounded text-xs font-medium transition-colors">
+                            Any change
+                        </button>
+                        <button type="button"
+                                @click.prevent="fieldModes[col] = 'fill_only'"
+                                :class="fieldModes[col] === 'fill_only'
+                                    ? 'bg-amber-500 text-white'
+                                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
+                                class="px-2.5 py-1 rounded text-xs font-medium transition-colors">
+                            Fill only
+                        </button>
+                        <span x-show="fieldModes[col] === 'fill_only'"
+                              class="text-xs text-amber-600 ml-1">
+                            blank → value only
+                        </span>
+                    </div>
+                </div>
             </template>
         </div>
         <p class="text-xs text-gray-400 mt-2" x-text="`${watchedFields.length} fields selected`"></p>
@@ -151,6 +182,7 @@ function setupWizard() {
         columns: [],
         jobKeyColumn: '',
         watchedFields: [],
+        fieldModes: {},   // { columnName: 'any_change' | 'fill_only' }
         outputMappings: [],
         uploading: false,
         saving: false,
@@ -214,6 +246,7 @@ function setupWizard() {
                     body: JSON.stringify({
                         job_key_column: this.jobKeyColumn,
                         watched_fields: this.watchedFields,
+                        field_modes: this.fieldModes,
                     }),
                 });
                 if (!fieldsRes.ok) {

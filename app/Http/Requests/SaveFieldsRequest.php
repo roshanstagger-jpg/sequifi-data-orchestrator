@@ -12,9 +12,12 @@ class SaveFieldsRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'job_key_column' => ['required', 'string'],
-            'watched_fields' => ['required', 'array', 'min:1'],
+            'job_key_column'  => ['required', 'string'],
+            'watched_fields'  => ['required', 'array', 'min:1'],
             'watched_fields.*' => ['required', 'string'],
+            // Optional map of column_name => change_mode
+            'field_modes'     => ['sometimes', 'array'],
+            'field_modes.*'   => ['in:any_change,fill_only'],
         ];
     }
 }

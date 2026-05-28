@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\SaveFieldsRequest;
 use App\Http\Requests\SaveTemplateRequest;
+use App\Models\SnapshotJob;
 use App\Models\Tenant;
 use App\Services\FileParserService;
 use Illuminate\Http\Request;
@@ -49,10 +50,20 @@ class ConfigController extends Controller
     {
         $tenant->update(['job_key_column' => $request->job_key_column]);
 
+        // Build per-field change_mode map; default to 'any_change' when omitted.
+        $fieldModes = $request->field_modes ?? [];
+
         $tenant->watchedFields()->delete();
         $tenant->watchedFields()->createMany(
-            array_map(fn($f) => ['column_name' => $f], $request->watched_fields)
+            array_map(fn($f) => [
+                'column_name' => $f,
+                'change_mode' => $fieldModes[$f] ?? 'any_change',
+            ], $request->watched_fields)
         );
+
+        // Invalidate existing snapshots — the hash computation depends on which
+        // fields are watched and their change_mode, so old hashes are stale.
+        SnapshotJob::where('tenant_id', $tenant->id)->delete();
 
         return response()->json(['success' => true]);
     }

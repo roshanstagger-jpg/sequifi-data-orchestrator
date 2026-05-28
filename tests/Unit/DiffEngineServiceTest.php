@@ -22,12 +22,26 @@ class DiffEngineServiceTest extends TestCase
         $this->service = new DiffEngineService();
     }
 
+    /**
+     * @param  array<string>|array<string, string>  $watchedFields
+     *   Either a flat list of column names (defaults to 'any_change'), or a map
+     *   of column_name => change_mode, e.g. ['Status' => 'any_change', 'Date' => 'fill_only'].
+     */
     private function makeTenant(string $jobKey = 'Job ID', array $watchedFields = ['Status']): Tenant
     {
         $tenant = Tenant::create(['name' => 'Test', 'slug' => 'test', 'job_key_column' => $jobKey]);
-        foreach ($watchedFields as $field) {
-            WatchedField::create(['tenant_id' => $tenant->id, 'column_name' => $field]);
+
+        // Support both flat arrays and associative arrays with explicit change_mode.
+        foreach ($watchedFields as $key => $value) {
+            if (is_int($key)) {
+                // Flat array: $value is the column name, default change_mode
+                WatchedField::create(['tenant_id' => $tenant->id, 'column_name' => $value, 'change_mode' => 'any_change']);
+            } else {
+                // Associative: $key is column name, $value is change_mode
+                WatchedField::create(['tenant_id' => $tenant->id, 'column_name' => $key, 'change_mode' => $value]);
+            }
         }
+
         return $tenant;
     }
 
@@ -93,6 +107,82 @@ class DiffEngineServiceTest extends TestCase
 
         $this->assertSame(0, $counts['changed']);
         $this->assertSame(1, $counts['unchanged']);
+    }
+
+    // --- fill_only change_mode tests ---
+
+    public function test_fill_only_blank_to_value_flags_changed(): void
+    {
+        $tenant = $this->makeTenant(watchedFields: ['Milestone Date' => 'fill_only']);
+        $run1 = $this->makeRun($tenant);
+        $this->service->diff($tenant, $run1, [['Job ID' => '1', 'Milestone Date' => '']]);
+
+        $run2 = $this->makeRun($tenant);
+        $counts = $this->service->diff($tenant, $run2, [['Job ID' => '1', 'Milestone Date' => '2024-06-01']]);
+
+        $this->assertSame(1, $counts['changed'], 'blank→value should flag as changed');
+    }
+
+    public function test_fill_only_value_to_different_value_does_not_flag_changed(): void
+    {
+        $tenant = $this->makeTenant(watchedFields: ['Milestone Date' => 'fill_only']);
+        $run1 = $this->makeRun($tenant);
+        $this->service->diff($tenant, $run1, [['Job ID' => '1', 'Milestone Date' => '2024-01-15']]);
+
+        $run2 = $this->makeRun($tenant);
+        $counts = $this->service->diff($tenant, $run2, [['Job ID' => '1', 'Milestone Date' => '2024-02-01']]);
+
+        $this->assertSame(0, $counts['changed'], 'value→different value should not flag changed');
+        $this->assertSame(1, $counts['unchanged']);
+    }
+
+    public function test_fill_only_blank_stays_blank_is_unchanged(): void
+    {
+        $tenant = $this->makeTenant(watchedFields: ['Milestone Date' => 'fill_only']);
+        $run1 = $this->makeRun($tenant);
+        $this->service->diff($tenant, $run1, [['Job ID' => '1', 'Milestone Date' => '']]);
+
+        $run2 = $this->makeRun($tenant);
+        $counts = $this->service->diff($tenant, $run2, [['Job ID' => '1', 'Milestone Date' => '']]);
+
+        $this->assertSame(0, $counts['changed']);
+        $this->assertSame(1, $counts['unchanged']);
+    }
+
+    public function test_mixed_modes_only_any_change_field_triggers(): void
+    {
+        // Status = any_change, Milestone Date = fill_only
+        $tenant = $this->makeTenant(watchedFields: ['Status' => 'any_change', 'Milestone Date' => 'fill_only']);
+        $run1 = $this->makeRun($tenant);
+        $this->service->diff($tenant, $run1, [
+            ['Job ID' => '1', 'Status' => 'Active', 'Milestone Date' => '2024-01-15'],
+        ]);
+
+        // Milestone Date changes (non-blank→non-blank), Status unchanged
+        $run2 = $this->makeRun($tenant);
+        $counts = $this->service->diff($tenant, $run2, [
+            ['Job ID' => '1', 'Status' => 'Active', 'Milestone Date' => '2024-06-01'],
+        ]);
+
+        $this->assertSame(0, $counts['changed'], 'only milestone changed (fill_only, non-blank→non-blank) — should not trigger');
+        $this->assertSame(1, $counts['unchanged']);
+    }
+
+    public function test_mixed_modes_any_change_field_change_triggers(): void
+    {
+        $tenant = $this->makeTenant(watchedFields: ['Status' => 'any_change', 'Milestone Date' => 'fill_only']);
+        $run1 = $this->makeRun($tenant);
+        $this->service->diff($tenant, $run1, [
+            ['Job ID' => '1', 'Status' => 'Active', 'Milestone Date' => '2024-01-15'],
+        ]);
+
+        // Status changes (any_change) — should trigger even though Milestone Date didn't
+        $run2 = $this->makeRun($tenant);
+        $counts = $this->service->diff($tenant, $run2, [
+            ['Job ID' => '1', 'Status' => 'Installed', 'Milestone Date' => '2024-01-15'],
+        ]);
+
+        $this->assertSame(1, $counts['changed']);
     }
 
     public function test_job_absent_from_new_file_is_dropped_from_snapshot(): void
