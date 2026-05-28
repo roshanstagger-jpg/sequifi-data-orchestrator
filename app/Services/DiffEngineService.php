@@ -105,14 +105,14 @@ class DiffEngineService
                 }
             }
 
-            // Pass $snapshotData as a PHP array — the model's 'array' cast will
-            // json_encode() it exactly once when building the INSERT statement.
-            // (Passing json_encode() here would cause the cast to double-encode it.)
+            // Eloquent's upsert() calls toBase()->upsert() directly and does NOT
+            // apply model attribute casts. We must json_encode() manually here;
+            // the model's 'array' cast will json_decode() on read.
             $snapshotUpserts[$jobKey] = [
                 'tenant_id'       => $tenant->id,
                 'import_run_id'   => $run->id,
                 'job_key'         => $jobKey,
-                'data'            => $snapshotData,
+                'data'            => json_encode($snapshotData),
                 'snapshot_hash'   => $hash,
                 'created_at'      => $now,
                 'updated_at'      => $now,
