@@ -36,6 +36,28 @@
         </div>
     @endif
 
+    {{-- API pull card --}}
+    @if($tenant->isConfigured() && $tenant->hasApiConfig())
+        <div class="bg-white rounded-xl border border-gray-200 p-6 mb-6" x-data="{ pulling: false }">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h2 class="font-semibold">Pull from Sequifi API</h2>
+                    <p class="text-sm text-gray-500 mt-0.5">Fetch last {{ $tenant->api_lookback_days }} days and run diff</p>
+                </div>
+                <form method="POST" action="{{ route('tenants.runs.pull', $tenant) }}" @submit="pulling = true">
+                    @csrf
+                    <button type="submit" :disabled="pulling"
+                            class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-60"
+                            x-text="pulling ? 'Pulling…' : 'Pull Now'">
+                    </button>
+                </form>
+            </div>
+            @if($errors->has('pull'))
+                <p class="mt-3 text-sm text-red-600">{{ $errors->first('pull') }}</p>
+            @endif
+        </div>
+    @endif
+
     {{-- Run history --}}
     @if($runs->isEmpty())
         <div class="text-center py-12 text-gray-400 text-sm">No imports yet.</div>

@@ -14,6 +14,7 @@ class ExampleTest extends TestCase
     {
         $response = $this->get('/');
 
-        $response->assertStatus(200);
+        // Root redirects to tenants list
+        $response->assertRedirect(route('tenants.index'));
     }
 }

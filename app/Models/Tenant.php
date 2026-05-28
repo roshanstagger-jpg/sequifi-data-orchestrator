@@ -8,9 +8,21 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Tenant extends Model
 {
-    protected $fillable = ['name', 'slug', 'job_key_column', 'api_token'];
+    protected $fillable = [
+        'name',
+        'slug',
+        'job_key_column',
+        'api_token',
+        'sequifi_api_url',
+        'sequifi_bearer_token',
+        'api_lookback_days',
+    ];
 
-    protected $hidden = ['api_token'];
+    protected $hidden = ['api_token', 'sequifi_bearer_token'];
+
+    protected $casts = [
+        'sequifi_bearer_token' => 'encrypted',
+    ];
 
     public function importRuns(): HasMany
     {
@@ -37,5 +49,10 @@ class Tenant extends Model
         return $this->job_key_column !== null
             && $this->watchedFields()->exists()
             && $this->exportTemplateColumns()->exists();
+    }
+
+    public function hasApiConfig(): bool
+    {
+        return !empty($this->sequifi_bearer_token);
     }
 }

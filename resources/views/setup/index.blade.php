@@ -25,31 +25,102 @@
         </template>
     </div>
 
-    {{-- Step 1: Upload sample file --}}
+    {{-- Step 1: Sample file / API config --}}
     <div x-show="step === 1" class="bg-white rounded-xl border border-gray-200 p-6">
-        <h2 class="font-semibold mb-1">Upload a sample file</h2>
-        <p class="text-sm text-gray-500 mb-4">One row from your typical weekly import. Used to detect column names.</p>
 
-        <div x-show="!uploading && !columns.length">
-            <label class="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-8 cursor-pointer hover:border-blue-400 transition-colors">
-                <span class="text-gray-400 text-sm mb-2">Click to upload .xlsx, .xls, or .csv</span>
-                <input type="file" accept=".xlsx,.xls,.csv" class="hidden" @change="uploadSample($event)">
-            </label>
+        {{-- Mode toggle --}}
+        <div class="flex items-center gap-1 p-1 bg-gray-100 rounded-lg w-fit mb-5">
+            <button type="button"
+                    @click="apiMode = false; columns = apiMode ? [] : columns; error = ''"
+                    :class="!apiMode ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'"
+                    class="px-4 py-1.5 rounded-md text-sm font-medium transition-all">
+                Upload file
+            </button>
+            <button type="button"
+                    @click="apiMode = true; error = ''"
+                    :class="apiMode ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'"
+                    class="px-4 py-1.5 rounded-md text-sm font-medium transition-all">
+                Pull from Sequifi API
+            </button>
         </div>
 
-        <div x-show="uploading" class="text-sm text-gray-500 py-4">Detecting columns...</div>
+        {{-- File upload panel --}}
+        <div x-show="!apiMode">
+            <h2 class="font-semibold mb-1">Upload a sample file</h2>
+            <p class="text-sm text-gray-500 mb-4">One row from your typical weekly import. Used to detect column names.</p>
 
-        <div x-show="columns.length > 0" class="space-y-3">
-            <p class="text-sm text-green-700 font-medium" x-text="`Detected ${columns.length} columns`"></p>
-            <div class="flex flex-wrap gap-2">
-                <template x-for="col in columns" :key="col">
-                    <span class="px-2 py-1 bg-gray-100 rounded text-xs text-gray-700" x-text="col"></span>
-                </template>
+            <div x-show="!uploading && !columns.length">
+                <label class="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-lg p-8 cursor-pointer hover:border-blue-400 transition-colors">
+                    <span class="text-gray-400 text-sm mb-2">Click to upload .xlsx, .xls, or .csv</span>
+                    <input type="file" accept=".xlsx,.xls,.csv" class="hidden" @change="uploadSample($event)">
+                </label>
             </div>
-            <button @click="step = 2"
-                    class="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
-                Continue →
-            </button>
+
+            <div x-show="uploading" class="text-sm text-gray-500 py-4">Detecting columns...</div>
+
+            <div x-show="columns.length > 0 && !apiMode" class="space-y-3">
+                <p class="text-sm text-green-700 font-medium" x-text="`Detected ${columns.length} columns`"></p>
+                <div class="flex flex-wrap gap-2">
+                    <template x-for="col in columns" :key="col">
+                        <span class="px-2 py-1 bg-gray-100 rounded text-xs text-gray-700" x-text="col"></span>
+                    </template>
+                </div>
+                <button @click="step = 2"
+                        class="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
+                    Continue →
+                </button>
+            </div>
+        </div>
+
+        {{-- API config panel --}}
+        <div x-show="apiMode" class="space-y-4">
+            <div>
+                <h2 class="font-semibold mb-1">Connect to Sequifi API</h2>
+                <p class="text-sm text-gray-500">Configure your API credentials to pull data directly from Sequifi.</p>
+            </div>
+
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">API Base URL</label>
+                    <input type="url" x-model="apiUrl"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                           placeholder="https://api.sequifi.com">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Bearer Token</label>
+                    <input type="password" x-model="apiToken"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                           placeholder="Paste Bearer token…"
+                           autocomplete="off">
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Days of history to pull</label>
+                    <input type="number" x-model.number="apiLookbackDays" min="1" max="730"
+                           class="w-32 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+            </div>
+
+            <div x-show="apiTestError" class="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2" x-text="apiTestError"></div>
+
+            <div x-show="apiTotal > 0 && columns.length > 0 && !apiTestError" class="text-sm text-green-700 bg-green-50 rounded-lg px-3 py-2">
+                Connected — <span x-text="apiTotal.toLocaleString()"></span> records found, <span x-text="columns.length"></span> columns detected.
+            </div>
+
+            <div class="flex items-center gap-3">
+                <button @click="testApi()"
+                        :disabled="testingApi || !apiToken"
+                        class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+                        x-text="testingApi ? 'Testing…' : 'Test connection'">
+                </button>
+
+                <button x-show="columns.length > 0 && apiTotal > 0 && !apiTestError"
+                        @click="step = 2"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
+                    Continue →
+                </button>
+            </div>
         </div>
 
         <div x-show="error" class="mt-3 text-sm text-red-600" x-text="error"></div>
@@ -189,6 +260,15 @@ function setupWizard() {
         error: '',
         saveError: '',
 
+        // API mode state
+        apiMode: {{ $tenant->hasApiConfig() ? 'true' : 'false' }},
+        apiUrl: '{{ $tenant->sequifi_api_url ?? 'https://api.sequifi.com' }}',
+        apiToken: '',
+        apiLookbackDays: {{ $tenant->api_lookback_days ?? 90 }},
+        testingApi: false,
+        apiTestError: '',
+        apiTotal: 0,
+
         // Always read the XSRF-TOKEN cookie — it's updated on every response so it
         // stays current even if the page has been open across cold-starts or navigation,
         // preventing 419 errors caused by stale CSRF tokens in the meta tag.
@@ -226,6 +306,54 @@ function setupWizard() {
                 this.error = 'Upload failed. Try again.';
             } finally {
                 this.uploading = false;
+            }
+        },
+
+        async testApi() {
+            this.testingApi = true;
+            this.apiTestError = '';
+
+            try {
+                const res = await fetch('{{ route('tenants.setup.api-test', $tenant) }}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-XSRF-TOKEN': this.xsrfToken(),
+                    },
+                    body: JSON.stringify({
+                        sequifi_api_url: this.apiUrl,
+                        sequifi_bearer_token: this.apiToken,
+                        api_lookback_days: this.apiLookbackDays,
+                    }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    this.apiTestError = data.message ?? 'Connection test failed. Please check your credentials.';
+                    return;
+                }
+                // Success — populate columns and total, then auto-save the API config
+                this.columns = data.columns ?? [];
+                this.apiTotal = data.total ?? 0;
+
+                // Auto-save credentials now that the test passed
+                await fetch('{{ route('tenants.setup.api', $tenant) }}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json',
+                        'X-XSRF-TOKEN': this.xsrfToken(),
+                    },
+                    body: JSON.stringify({
+                        sequifi_api_url: this.apiUrl,
+                        sequifi_bearer_token: this.apiToken,
+                        api_lookback_days: this.apiLookbackDays,
+                    }),
+                });
+            } catch {
+                this.apiTestError = 'Connection test failed. Please try again.';
+            } finally {
+                this.testingApi = false;
             }
         },
 

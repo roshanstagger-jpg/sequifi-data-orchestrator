@@ -8,7 +8,9 @@ use App\Models\Tenant;
 use App\Services\DiffEngineService;
 use App\Services\ExportBuilderService;
 use App\Services\FileParserService;
+use App\Services\SequifiApiService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class ImportController extends Controller
 {
@@ -16,6 +18,7 @@ class ImportController extends Controller
         private readonly FileParserService $parser,
         private readonly DiffEngineService $diffEngine,
         private readonly ExportBuilderService $exporter,
+        private readonly SequifiApiService $apiService,
     ) {}
 
     public function index(Tenant $tenant)
@@ -73,5 +76,38 @@ class ImportController extends Controller
         abort_if($run->status !== 'completed', 400);
 
         return $this->exporter->buildResponse($tenant, $run);
+    }
+
+    public function pull(Request $request, Tenant $tenant)
+    {
+        if (!$tenant->isConfigured()) {
+            return back()->withErrors(['pull' => 'Tenant configuration is incomplete. Complete setup first.']);
+        }
+
+        if (!$tenant->hasApiConfig()) {
+            return back()->withErrors(['pull' => 'Sequifi API credentials are not configured. Complete API setup first.']);
+        }
+
+        $run = $tenant->importRuns()->create([
+            'filename' => 'Sequifi API — ' . now()->format('Y-m-d'),
+            'status'   => 'processing',
+        ]);
+
+        try {
+            $jobs = $this->apiService->fetchAllSales($tenant);
+            $this->diffEngine->diff($tenant, $run, $jobs);
+        } catch (\Throwable $e) {
+            $run->update(['status' => 'failed', 'error_message' => $e->getMessage()]);
+            Log::error('API pull failed', [
+                'run_id'    => $run->id,
+                'tenant_id' => $tenant->id,
+                'error'     => $e->getMessage(),
+            ]);
+            return back()->withErrors(['pull' => 'API pull failed: ' . $e->getMessage()]);
+        }
+
+        return redirect()
+            ->route('tenants.runs.show', [$tenant, $run])
+            ->with('success', 'API pull processed. ' . $run->new_jobs . ' new, ' . $run->changed_jobs . ' changed.');
     }
 }

@@ -8,11 +8,15 @@ use App\Http\Requests\SaveTemplateRequest;
 use App\Models\SnapshotJob;
 use App\Models\Tenant;
 use App\Services\FileParserService;
+use App\Services\SequifiApiService;
 use Illuminate\Http\Request;
 
 class ConfigController extends Controller
 {
-    public function __construct(private readonly FileParserService $parser) {}
+    public function __construct(
+        private readonly FileParserService $parser,
+        private readonly SequifiApiService $apiService,
+    ) {}
 
     public function show(Tenant $tenant)
     {
@@ -80,5 +84,56 @@ class ConfigController extends Controller
         );
 
         return response()->json(['success' => true]);
+    }
+
+    public function saveApiConfig(Request $request, Tenant $tenant)
+    {
+        $request->validate([
+            'sequifi_api_url'       => 'sometimes|nullable|url',
+            'sequifi_bearer_token'  => 'sometimes|nullable|string',
+            'api_lookback_days'     => 'sometimes|integer|min:1|max:730',
+        ]);
+
+        $updates = [];
+
+        if ($request->has('sequifi_api_url')) {
+            $updates['sequifi_api_url'] = $request->sequifi_api_url;
+        }
+        if ($request->has('sequifi_bearer_token') && $request->sequifi_bearer_token !== null) {
+            $updates['sequifi_bearer_token'] = $request->sequifi_bearer_token;
+        }
+        if ($request->has('api_lookback_days')) {
+            $updates['api_lookback_days'] = (int) $request->api_lookback_days;
+        }
+
+        if (!empty($updates)) {
+            $tenant->update($updates);
+        }
+
+        return response()->json(['success' => true]);
+    }
+
+    public function testApiConnection(Request $request, Tenant $tenant)
+    {
+        $request->validate([
+            'sequifi_api_url'      => 'nullable|url',
+            'sequifi_bearer_token' => 'required|string',
+            'api_lookback_days'    => 'nullable|integer|min:1|max:730',
+        ]);
+
+        // Temporarily set credentials on the model without persisting to DB
+        $tenant->sequifi_api_url      = $request->sequifi_api_url ?? $tenant->sequifi_api_url;
+        $tenant->sequifi_bearer_token = $request->sequifi_bearer_token;
+        if ($request->filled('api_lookback_days')) {
+            $tenant->api_lookback_days = (int) $request->api_lookback_days;
+        }
+
+        try {
+            $result = $this->apiService->testConnection($tenant);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($result);
     }
 }
