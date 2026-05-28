@@ -73,6 +73,13 @@ class SequifiApiService
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $tenant->sequifi_bearer_token,
                 'Accept'        => 'application/json',
+            ])->withOptions([
+                // Vercel's Lambda environment uses OpenSSL 1.0.2k-fips which defaults to
+                // legacy SSL negotiation.  Force TLS 1.2 so the handshake succeeds with
+                // servers that have disabled TLS 1.0/1.1.
+                'curl' => [
+                    CURLOPT_SSLVERSION => CURL_SSLVERSION_TLSv1_2,
+                ],
             ])->get("{$baseUrl}/v1/sales", [
                 'page'      => $page,
                 'per_page'  => 200,
