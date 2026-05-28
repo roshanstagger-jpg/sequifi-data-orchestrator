@@ -84,7 +84,7 @@
                     <label class="block text-sm font-medium text-gray-700 mb-1">API Base URL</label>
                     <input type="url" x-model="apiUrl"
                            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                           placeholder="https://api.sequifi.com">
+                           placeholder="https://marketplace-api.sequifi.com">
                 </div>
 
                 <div>
@@ -262,7 +262,7 @@ function setupWizard() {
 
         // API mode state
         apiMode: {{ $tenant->hasApiConfig() ? 'true' : 'false' }},
-        apiUrl: '{{ $tenant->sequifi_api_url ?? 'https://api.sequifi.com' }}',
+        apiUrl: '{{ $tenant->sequifi_api_url ?? 'https://marketplace-api.sequifi.com' }}',
         apiToken: '',
         apiLookbackDays: {{ $tenant->api_lookback_days ?? 90 }},
         testingApi: false,

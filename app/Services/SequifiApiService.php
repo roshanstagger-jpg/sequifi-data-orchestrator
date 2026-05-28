@@ -66,26 +66,28 @@ class SequifiApiService
      */
     private function fetchPage(Tenant $tenant, string $dateFrom, int $page): array
     {
-        $baseUrl = rtrim($tenant->sequifi_api_url ?? 'https://api.sequifi.com', '/');
-        $dateTo  = now()->format('Y-m-d');
+        $baseUrl  = rtrim($tenant->sequifi_api_url ?? 'https://marketplace-api.sequifi.com', '/');
+        $dateTo   = now()->format('Y-m-d');
+        $params   = ['page' => $page, 'per_page' => 200, 'date_from' => $dateFrom, 'date_to' => $dateTo];
 
         try {
-            $response = Http::withHeaders([
-                'Authorization' => 'Bearer ' . $tenant->sequifi_bearer_token,
-                'Accept'        => 'application/json',
-            ])->withOptions([
-                // Vercel's Lambda environment uses OpenSSL 1.0.2k-fips which defaults to
-                // legacy SSL negotiation.  Force TLS 1.2 so the handshake succeeds with
-                // servers that have disabled TLS 1.0/1.1.
-                'curl' => [
-                    CURLOPT_SSLVERSION => CURL_SSLVERSION_TLSv1_2,
-                ],
-            ])->get("{$baseUrl}/v1/sales", [
-                'page'      => $page,
-                'per_page'  => 200,
-                'date_from' => $dateFrom,
-                'date_to'   => $dateTo,
-            ]);
+            // Vercel's PHP Lambda uses OpenSSL 1.0.2k-fips which cannot negotiate TLS
+            // with marketplace-api.sequifi.com.  When VERCEL_URL is present we route
+            // through api/sequifi.js (Node.js, modern TLS) in the same deployment.
+            $proxyUrl = $this->proxyUrl();
+
+            if ($proxyUrl) {
+                $response = Http::post($proxyUrl, [
+                    'endpoint' => "{$baseUrl}/v1/sales",
+                    'token'    => $tenant->sequifi_bearer_token,
+                    'params'   => $params,
+                ]);
+            } else {
+                $response = Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $tenant->sequifi_bearer_token,
+                    'Accept'        => 'application/json',
+                ])->get("{$baseUrl}/v1/sales", $params);
+            }
         } catch (\Throwable $e) {
             throw new \RuntimeException('Network error contacting Sequifi API: ' . $e->getMessage(), 0, $e);
         }
@@ -222,5 +224,20 @@ class SequifiApiService
         }
 
         return $row;
+    }
+
+    /**
+     * Return the internal proxy URL when running on Vercel, null otherwise.
+     * VERCEL_URL is automatically injected by Vercel for every deployment.
+     */
+    private function proxyUrl(): ?string
+    {
+        $vercelUrl = env('VERCEL_URL');
+        if (!$vercelUrl) {
+            return null;
+        }
+
+        $base = str_starts_with($vercelUrl, 'http') ? $vercelUrl : 'https://' . $vercelUrl;
+        return rtrim($base, '/') . '/sequifi-proxy';
     }
 }

@@ -6,12 +6,13 @@
     "api/index.php": {
       "runtime": "vercel-php@0.7.2",
       "maxDuration": 60
+    },
+    "api/sequifi.js": {
+      "maxDuration": 60
     }
   },
   "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/api/index.php"
-    }
+    { "src": "/sequifi-proxy", "dest": "/api/sequifi.js" },
+    { "src": "/(.*)",          "dest": "/api/index.php"  }
   ]
 }
