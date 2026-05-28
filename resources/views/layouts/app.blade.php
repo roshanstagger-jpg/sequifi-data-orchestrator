@@ -19,6 +19,20 @@
                 <a href="{{ route('tenants.runs.index', $tenant) }}" class="text-gray-600 hover:text-gray-900">
                     {{ $tenant->name }}
                 </a>
+                <span class="ml-auto flex items-center gap-5 text-sm">
+                    <a href="{{ route('tenants.runs.index', $tenant) }}"
+                       class="{{ request()->routeIs('tenants.runs.*') ? 'text-gray-900 font-medium' : 'text-gray-500 hover:text-gray-700' }}">
+                        Imports
+                    </a>
+                    <a href="{{ route('tenants.agents.index', $tenant) }}"
+                       class="{{ request()->routeIs('tenants.agents.*') ? 'text-gray-900 font-medium' : 'text-gray-500 hover:text-gray-700' }}">
+                        User Ledger
+                    </a>
+                    <a href="{{ route('tenants.setup', $tenant) }}"
+                       class="{{ request()->routeIs('tenants.setup') ? 'text-gray-900 font-medium' : 'text-gray-500 hover:text-gray-700' }}">
+                        Config
+                    </a>
+                </span>
             @endisset
         </div>
     </nav>

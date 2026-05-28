@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AgentController;
 use App\Http\Controllers\ConfigController;
 use App\Http\Controllers\ImportController;
 use App\Http\Controllers\TenantController;
@@ -24,4 +25,7 @@ Route::prefix('/tenants/{tenant}')->group(function () {
     Route::post('/runs/pull', [ImportController::class, 'pull'])->name('tenants.runs.pull');
     Route::get('/runs/{run}', [ImportController::class, 'show'])->name('tenants.runs.show');
     Route::get('/runs/{run}/export', [ImportController::class, 'export'])->name('tenants.runs.export');
+
+    Route::get('/agents', [AgentController::class, 'index'])->name('tenants.agents.index');
+    Route::post('/agents/sync', [AgentController::class, 'sync'])->name('tenants.agents.sync');
 });

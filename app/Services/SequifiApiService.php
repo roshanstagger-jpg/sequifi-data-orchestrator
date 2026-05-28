@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Models\SequifiAgent;
 use App\Models\Tenant;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -280,6 +281,156 @@ class SequifiApiService
         }
 
         return $row;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // User / Agent ledger
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Fetch all users from GET /v1/users (paginated) and return raw rows.
+     *
+     * @throws \RuntimeException on failure
+     */
+    public function fetchAllUsers(Tenant $tenant): array
+    {
+        $rows  = [];
+        $page  = 1;
+
+        do {
+            $data      = $this->fetchUsersPage($tenant, $page);
+            $users     = $data['users'] ?? $data['Users'] ?? $data['data'] ?? [];
+            $lastPage  = (int) ($data['last_page'] ?? $data['lastPage'] ?? 1);
+
+            foreach ($users as $user) {
+                if (is_array($user)) {
+                    $rows[] = $user;
+                }
+            }
+
+            $page++;
+        } while ($page <= $lastPage);
+
+        return $rows;
+    }
+
+    /**
+     * Sync all Sequifi users into the sequifi_agents table for this tenant.
+     * Uses upsert keyed on (tenant_id, sequifi_id).
+     *
+     * Returns the number of records upserted.
+     *
+     * @throws \RuntimeException on failure
+     */
+    public function syncAgents(Tenant $tenant): int
+    {
+        $users = $this->fetchAllUsers($tenant);
+        $now   = now();
+        $rows  = [];
+
+        foreach ($users as $user) {
+            $firstName = (string) ($user['first_name'] ?? '');
+            $lastName  = (string) ($user['last_name']  ?? '');
+            $fullName  = trim($firstName . ' ' . $lastName) ?: null;
+
+            $rows[] = [
+                'tenant_id'   => $tenant->id,
+                'sequifi_id'  => (string) ($user['id'] ?? ''),
+                'first_name'  => $firstName ?: null,
+                'last_name'   => $lastName  ?: null,
+                'full_name'   => $fullName,
+                'email'       => ($user['email']   ?? null) ?: null,
+                'phone'       => ($user['phone']   ?? $user['phone_number'] ?? null) ?: null,
+                'worker_type' => ($user['worker_type'] ?? $user['workerType'] ?? null) ?: null,
+                'position'    => ($user['position'] ?? $user['job_title'] ?? null) ?: null,
+                'location'    => ($user['location'] ?? $user['office'] ?? $user['location_name'] ?? null) ?: null,
+                'status'      => ($user['status']   ?? null) ?: null,
+                'raw_data'    => json_encode($user),
+                'synced_at'   => $now,
+                'created_at'  => $now,
+                'updated_at'  => $now,
+            ];
+        }
+
+        if (empty($rows)) {
+            return 0;
+        }
+
+        // Upsert: update everything except tenant_id/sequifi_id on conflict
+        SequifiAgent::upsert(
+            $rows,
+            ['tenant_id', 'sequifi_id'],
+            ['first_name', 'last_name', 'full_name', 'email', 'phone',
+             'worker_type', 'position', 'location', 'status', 'raw_data',
+             'synced_at', 'updated_at']
+        );
+
+        return count($rows);
+    }
+
+    /**
+     * Fetch a single page from GET /v1/users.
+     *
+     * @throws \RuntimeException on HTTP error or network failure
+     */
+    private function fetchUsersPage(Tenant $tenant, int $page): array
+    {
+        $baseUrl = rtrim($tenant->sequifi_api_url ?? 'https://marketplace-api.sequifi.com', '/');
+        $params  = ['page' => $page, 'per_page' => 100];
+
+        try {
+            $proxyUrl = $this->proxyUrl();
+
+            if ($proxyUrl) {
+                $response = Http::post($proxyUrl, [
+                    'endpoint' => "{$baseUrl}/v1/users",
+                    'token'    => $tenant->sequifi_bearer_token,
+                    'params'   => $params,
+                ]);
+            } else {
+                $response = Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $tenant->sequifi_bearer_token,
+                    'Accept'        => 'application/json',
+                ])->get("{$baseUrl}/v1/users", $params);
+            }
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('Network error contacting Sequifi API (users): ' . $e->getMessage(), 0, $e);
+        }
+
+        if ($response->status() === 401 || $response->status() === 403) {
+            throw new \RuntimeException('Authentication failed fetching users. Please check your Bearer token.');
+        }
+
+        if (!$response->successful()) {
+            $body    = $response->json() ?? [];
+            $message = $body['message'] ?? ('Users API request failed with status ' . $response->status());
+            throw new \RuntimeException($message);
+        }
+
+        $body = $response->json();
+
+        if ($body === null) {
+            $preview = substr($response->body(), 0, 300);
+            throw new \RuntimeException('Non-JSON response from Sequifi users endpoint. Raw: ' . $preview);
+        }
+
+        // Standard envelope: { status, message, data: { users, current_page, last_page, ... } }
+        if (isset($body['data']) && is_array($body['data'])) {
+            return $body['data'];
+        }
+
+        // Flat: { users: [...], current_page, last_page }
+        if (isset($body['users']) || isset($body['Users'])) {
+            return $body;
+        }
+
+        // Direct array of users
+        if (isset($body[0]) || empty($body)) {
+            return ['users' => $body, 'last_page' => 1];
+        }
+
+        $preview = substr(json_encode($body), 0, 300);
+        throw new \RuntimeException('Unexpected response format from Sequifi users endpoint. Raw: ' . $preview);
     }
 
     /**

@@ -44,6 +44,11 @@ class Tenant extends Model
         return $this->hasMany(SnapshotJob::class);
     }
 
+    public function sequifiAgents(): HasMany
+    {
+        return $this->hasMany(SequifiAgent::class)->orderBy('full_name');
+    }
+
     /**
      * Ready for file imports — requires job key, watched fields, AND output template
      * (the template drives the delta export).
