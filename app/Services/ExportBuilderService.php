@@ -4,7 +4,6 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\ImportRun;
-use App\Models\SnapshotJob;
 use App\Models\Tenant;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithHeadings;
@@ -17,15 +16,13 @@ class ExportBuilderService
     {
         $templateColumns = $tenant->exportTemplateColumns;
 
-        $changedKeys = $run->runJobs()
+        // Export-ready data is stored directly on each import_run_job row.
+        // Only new/changed rows carry data; unchanged rows have data = null.
+        $jobs = $run->runJobs()
             ->whereIn('change_type', ['new', 'changed'])
-            ->pluck('job_key')
-            ->toArray();
-
-        $jobs = SnapshotJob::where('tenant_id', $tenant->id)
-            ->whereIn('job_key', $changedKeys)
+            ->whereNotNull('data')
             ->get()
-            ->map(fn($sj) => $sj->data);
+            ->map(fn($rj) => $rj->data);   // already decoded by model's array cast
 
         $headers = $templateColumns->pluck('output_column')->toArray();
 
@@ -44,15 +41,8 @@ class ExportBuilderService
                     private readonly array $rows,
                 ) {}
 
-                public function array(): array
-                {
-                    return $this->rows;
-                }
-
-                public function headings(): array
-                {
-                    return $this->headers;
-                }
+                public function array(): array  { return $this->rows; }
+                public function headings(): array { return $this->headers; }
             },
             $filename
         );

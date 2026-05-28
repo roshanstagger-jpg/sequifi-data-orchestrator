@@ -10,7 +10,11 @@ class ImportRunJob extends Model
 {
     public $timestamps = false;
 
-    protected $fillable = ['import_run_id', 'job_key', 'change_type'];
+    protected $fillable = ['import_run_id', 'job_key', 'change_type', 'data'];
+
+    protected $casts = [
+        'data' => 'array',
+    ];
 
     public function importRun(): BelongsTo
     {

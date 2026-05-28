@@ -9,16 +9,18 @@ use App\Services\DiffEngineService;
 use App\Services\ExportBuilderService;
 use App\Services\FileParserService;
 use App\Services\SequifiApiService;
+use App\Services\SnapshotSyncService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class ImportController extends Controller
 {
     public function __construct(
-        private readonly FileParserService $parser,
-        private readonly DiffEngineService $diffEngine,
+        private readonly FileParserService   $parser,
+        private readonly DiffEngineService   $diffEngine,
         private readonly ExportBuilderService $exporter,
-        private readonly SequifiApiService $apiService,
+        private readonly SequifiApiService   $apiService,
+        private readonly SnapshotSyncService $snapshotSync,
     ) {}
 
     public function index(Tenant $tenant)
@@ -27,6 +29,9 @@ class ImportController extends Controller
         return view('runs.index', compact('tenant', 'runs'));
     }
 
+    /**
+     * File import: parse → diff against snapshot → export new/changed rows.
+     */
     public function store(Request $request, Tenant $tenant)
     {
         $request->validate(['file' => 'required|file|mimes:xlsx,xls,csv|max:51200']);
@@ -36,9 +41,9 @@ class ImportController extends Controller
         }
 
         $file = $request->file('file');
-        $run = $tenant->importRuns()->create([
+        $run  = $tenant->importRuns()->create([
             'filename' => $file->getClientOriginalName(),
-            'status' => 'processing',
+            'status'   => 'processing',
         ]);
 
         try {
@@ -46,10 +51,10 @@ class ImportController extends Controller
             $this->diffEngine->diff($tenant, $run, $jobs);
         } catch (\Throwable $e) {
             $run->update(['status' => 'failed', 'error_message' => $e->getMessage()]);
-            \Illuminate\Support\Facades\Log::error('Import failed', [
-                'run_id' => $run->id,
+            Log::error('Import failed', [
+                'run_id'    => $run->id,
                 'tenant_id' => $tenant->id,
-                'error' => $e->getMessage(),
+                'error'     => $e->getMessage(),
             ]);
             return back()->withErrors(['file' => 'Import failed. Please check your file format and try again.']);
         }
@@ -78,6 +83,9 @@ class ImportController extends Controller
         return $this->exporter->buildResponse($tenant, $run);
     }
 
+    /**
+     * API pull: fetch all Sequifi sales → sync snapshot only, no export.
+     */
     public function pull(Request $request, Tenant $tenant)
     {
         if (!$tenant->isReadyForApiPull()) {
@@ -94,8 +102,8 @@ class ImportController extends Controller
         ]);
 
         try {
-            $jobs = $this->apiService->fetchAllSales($tenant);
-            $this->diffEngine->diff($tenant, $run, $jobs);
+            $jobs  = $this->apiService->fetchAllSales($tenant);
+            $total = $this->snapshotSync->sync($tenant, $run, $jobs);
         } catch (\Throwable $e) {
             $run->update(['status' => 'failed', 'error_message' => $e->getMessage()]);
             Log::error('API pull failed', [
@@ -103,7 +111,6 @@ class ImportController extends Controller
                 'tenant_id' => $tenant->id,
                 'error'     => $e->getMessage(),
             ]);
-            // Truncate DB exceptions — they embed full SQL with row data.
             $display = $e instanceof \Illuminate\Database\QueryException
                 ? 'Database error during pull. Check Vercel logs (run #' . $run->id . ').'
                 : 'API pull failed: ' . mb_substr($e->getMessage(), 0, 300);
@@ -111,7 +118,7 @@ class ImportController extends Controller
         }
 
         return redirect()
-            ->route('tenants.runs.show', [$tenant, $run])
-            ->with('success', 'API pull processed. ' . $run->new_jobs . ' new, ' . $run->changed_jobs . ' changed.');
+            ->route('tenants.runs.index', $tenant)
+            ->with('success', 'Snapshot synced — ' . number_format($total) . ' records from Sequifi.');
     }
 }
