@@ -22,14 +22,29 @@ class DiffEngineService
 
         $jobKeyColumn = $tenant->job_key_column;
 
-        $existingSnapshot = SnapshotJob::where('tenant_id', $tenant->id)
-            ->pluck('snapshot_hash', 'job_key')
-            ->toArray();
+        // Fields whose value-to-value changes are intentionally ignored.
+        // For these we also need to preserve the old snapshot value so that
+        // exports never silently overwrite them with a changed (but ignored) value.
+        $fillOnlyFields = array_keys(array_filter($watchedFields, fn($mode) => $mode === 'fill_only'));
+
+        // Load existing snapshot — hash for change detection, data only when
+        // fill_only fields exist (so we can preserve old values in the upsert).
+        if (!empty($fillOnlyFields)) {
+            $snapshotRows = SnapshotJob::where('tenant_id', $tenant->id)
+                ->get(['job_key', 'snapshot_hash', 'data']);
+            $existingSnapshot     = $snapshotRows->pluck('snapshot_hash', 'job_key')->toArray();
+            $existingSnapshotData = $snapshotRows->pluck('data', 'job_key')->toArray();
+        } else {
+            $existingSnapshot     = SnapshotJob::where('tenant_id', $tenant->id)
+                ->pluck('snapshot_hash', 'job_key')
+                ->toArray();
+            $existingSnapshotData = [];
+        }
 
         $counts = ['new' => 0, 'changed' => 0, 'unchanged' => 0];
         $snapshotUpserts = [];
-        $runJobInserts = [];
-        $incomingKeys = [];
+        $runJobInserts   = [];
+        $incomingKeys    = [];
         $now = now();
 
         foreach ($jobs as $job) {
@@ -52,20 +67,41 @@ class DiffEngineService
                 $counts['unchanged']++;
             }
 
+            // Build the data to persist in the snapshot.
+            // For fill_only fields: if the old snapshot had a non-blank value and the
+            // incoming row also has a non-blank value, keep the OLD value.  This means
+            // a value-to-value change on a fill_only field is both ignored for diffing
+            // AND invisible in exports — the downstream system always sees the original
+            // value, not the silently-changed one.
+            $snapshotData = $job;
+            if (!empty($fillOnlyFields) && isset($existingSnapshotData[$jobKey])) {
+                $oldData = $existingSnapshotData[$jobKey]; // already decoded (model casts to array)
+                foreach ($fillOnlyFields as $field) {
+                    $oldVal = (string) ($oldData[$field] ?? '');
+                    $newVal = (string) ($job[$field]  ?? '');
+                    if ($oldVal !== '' && $newVal !== '') {
+                        // Non-blank → non-blank: silently ignored change — freeze the old value.
+                        $snapshotData[$field] = $oldData[$field];
+                    }
+                    // blank → non-blank: intentional fill — store the new value (default).
+                    // non-blank → blank:  allow the clear — store the new blank (default).
+                }
+            }
+
             $snapshotUpserts[] = [
-                'tenant_id' => $tenant->id,
-                'import_run_id' => $run->id,
-                'job_key' => $jobKey,
-                'data' => json_encode($job),
-                'snapshot_hash' => $hash,
-                'created_at' => $now,
-                'updated_at' => $now,
+                'tenant_id'       => $tenant->id,
+                'import_run_id'   => $run->id,
+                'job_key'         => $jobKey,
+                'data'            => json_encode($snapshotData),
+                'snapshot_hash'   => $hash,
+                'created_at'      => $now,
+                'updated_at'      => $now,
             ];
 
             $runJobInserts[] = [
                 'import_run_id' => $run->id,
-                'job_key' => $jobKey,
-                'change_type' => $changeType,
+                'job_key'       => $jobKey,
+                'change_type'   => $changeType,
             ];
         }
 
@@ -89,11 +125,11 @@ class DiffEngineService
             }
 
             $run->update([
-                'total_jobs' => $counts['new'] + $counts['changed'] + $counts['unchanged'],
-                'new_jobs' => $counts['new'],
-                'changed_jobs' => $counts['changed'],
+                'total_jobs'     => $counts['new'] + $counts['changed'] + $counts['unchanged'],
+                'new_jobs'       => $counts['new'],
+                'changed_jobs'   => $counts['changed'],
                 'unchanged_jobs' => $counts['unchanged'],
-                'status' => 'completed',
+                'status'         => 'completed',
             ]);
         });
 
@@ -117,12 +153,11 @@ class DiffEngineService
             $raw = (string) ($job[$field] ?? '');
 
             if ($mode === 'fill_only') {
-                // Normalize to a binary sentinel so that a change between two
-                // non-blank values is invisible to the hash, but a blank→value
-                // transition (or value→blank) is detected.
+                // Normalise to a binary sentinel: blank stays blank, any non-blank
+                // value becomes '1'.  This makes value-to-value changes invisible to
+                // the hash while still detecting blank→value transitions.
                 $values[$field] = $raw === '' ? '' : '1';
             } else {
-                // any_change: use the actual value
                 $values[$field] = $raw;
             }
         }

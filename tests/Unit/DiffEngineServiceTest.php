@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Tests\Unit;
 
 use App\Models\ImportRun;
+use App\Models\SnapshotJob;
 use App\Models\Tenant;
 use App\Models\WatchedField;
 use App\Services\DiffEngineService;
@@ -183,6 +184,46 @@ class DiffEngineServiceTest extends TestCase
         ]);
 
         $this->assertSame(1, $counts['changed']);
+    }
+
+    public function test_fill_only_value_change_preserves_old_value_in_snapshot(): void
+    {
+        // Status (any_change) + Milestone Date (fill_only)
+        $tenant = $this->makeTenant(watchedFields: ['Status' => 'any_change', 'Milestone Date' => 'fill_only']);
+        $run1 = $this->makeRun($tenant);
+        $this->service->diff($tenant, $run1, [
+            ['Job ID' => '1', 'Status' => 'Active', 'Milestone Date' => '2024-01-15'],
+        ]);
+
+        // Status changes (triggers export); Milestone Date also changes non-blank→non-blank (ignored for diffing).
+        $run2 = $this->makeRun($tenant);
+        $this->service->diff($tenant, $run2, [
+            ['Job ID' => '1', 'Status' => 'Installed', 'Milestone Date' => '2024-06-01'],
+        ]);
+
+        $snapshot = SnapshotJob::where('tenant_id', $tenant->id)->where('job_key', '1')->first();
+
+        // fill_only field: old non-blank value must be frozen in the snapshot
+        $this->assertSame('2024-01-15', $snapshot->data['Milestone Date'],
+            'fill_only value-to-value change must not overwrite the stored value');
+
+        // any_change field: new value should be stored normally
+        $this->assertSame('Installed', $snapshot->data['Status']);
+    }
+
+    public function test_fill_only_blank_to_value_stores_new_value_in_snapshot(): void
+    {
+        $tenant = $this->makeTenant(watchedFields: ['Milestone Date' => 'fill_only']);
+        $run1 = $this->makeRun($tenant);
+        $this->service->diff($tenant, $run1, [['Job ID' => '1', 'Milestone Date' => '']]);
+
+        $run2 = $this->makeRun($tenant);
+        $this->service->diff($tenant, $run2, [['Job ID' => '1', 'Milestone Date' => '2024-06-01']]);
+
+        $snapshot = SnapshotJob::where('tenant_id', $tenant->id)->where('job_key', '1')->first();
+
+        // blank→value is an intentional fill — the new date must be stored
+        $this->assertSame('2024-06-01', $snapshot->data['Milestone Date']);
     }
 
     public function test_job_absent_from_new_file_is_dropped_from_snapshot(): void
